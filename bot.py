@@ -1,5 +1,4 @@
-# Установка библиотеки для бота
-!pip install -q aiogram
+
 
 import json
 import re
