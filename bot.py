@@ -1,8 +1,8 @@
-
-
 import json
 import re
 import asyncio
+import logging
+import sys
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.filters import Command
@@ -88,7 +88,7 @@ def clean_and_format_text(text: str = "", target: str = "@navigatorRR4") -> str:
     if not text:
         return target
 
-    # Списки фраз и ссылок из подвала, которые нужно полностью стирать
+    # Список фраз/ключевых слов из блоков внизу, которые нужно полностью стирать вместе с тем, что после них
     footers_to_remove = [
         r'Предложить пост.*',
         r'Поиск по водоёмам.*',
@@ -107,7 +107,7 @@ def clean_and_format_text(text: str = "", target: str = "@navigatorRR4") -> str:
     for pattern in footers_to_remove:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
 
-    # Заменяем случайные чужие упоминания на target
+    # Заменяем чистые @упоминания
     text = re.sub(r'(?<!#)\B@[A-Za-z0-9_]+', target, text)
 
     text = text.strip()
@@ -159,18 +159,4 @@ async def process_media_group(mg_id: str, target: str):
     caption = ""
     for p in posts:
         if p.caption:
-            caption = clean_and_format_text(p.caption, target)
-            break
-    
-    if not caption:
-        caption = target
-
-    await bot.copy_messages(
-        chat_id=target,
-        from_chat_id=posts[0].chat.id,
-        message_ids=[p.message_id for p in posts],
-        caption=caption
-    )
-
-print("🚀 Финальный бот запущен без ошибок!")
-await dp.start_polling(bot)
+            caption = clean
