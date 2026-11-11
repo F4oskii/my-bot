@@ -3,12 +3,21 @@ import re
 import asyncio
 import logging
 import sys
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.filters import Command
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 TOKEN = "9231798465:AAHTtexH01jpRYyRJNYQLeqNFM41Or0Ds4k"
 CONFIG_FILE = "bot_config.json"
+
+# Настройки вебхука для Render
+PORT = int(os.environ.get("PORT", 8080))
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+WEBHOOK_PATH = f"/bot/{TOKEN}"
+WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
 def load_config():
     try:
@@ -29,12 +38,12 @@ media_groups = {}
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
-        "⚙️ **Панель управления редиректом**\n\n"
+        "⚙️ **Панель управления редиректом (Webhook)**\n\n"
         "Команды для настройки:\n"
-        "• `/status` — показать текущие настройки\n"
-        "• `/set_sources @chan1 @chan2 @chan3` — задать каналы-источники\n"
-        "• `/set_target @navigatorRR4` — задать целевой канал\n\n"
-        "💡 *Бот очищает рекламный подвал снизу и добавляет ваш тег наверх.*"
+        "• `/status` — текущие настройки\n"
+        "• `/set_sources @chan1 @chan2` — каналы-источники\n"
+        "• `/set_target @navigatorRR4` — целевой канал\n\n"
+        "💡 *Работает через вебхуки 24/7!*"
     )
     await message.reply(text, parse_mode="Markdown")
 
@@ -43,76 +52,47 @@ async def cmd_status(message: Message):
     config = load_config()
     sources = config.get("sources", [])
     target = config.get("target", "@navigatorRR4")
-    
     sources_str = "\n".join([f"{i+1}. {s}" for i, s in enumerate(sources)]) if sources else "Список пуст"
-    text = (
-        "📋 **Текущие настройки:**\n\n"
-        f"**Каналы-источники (до 5 шт):**\n{sources_str}\n\n"
-        f"**Целевой канал:**\n{target}"
-    )
+    text = f"📋 **Текущие настройки:**\n\n**Источники:**\n{sources_str}\n\n**Цель:**\n{target}"
     await message.reply(text, parse_mode="Markdown")
 
 @dp.message(Command("set_sources"))
 async def cmd_set_sources(message: Message):
     args = message.text.split()[1:]
-    if not args:
-        await message.reply("❌ Укажите каналы через пробел.\nПример: `/set_sources @chan1 @chan2 @chan3`", parse_mode="Markdown")
+    if not args or len(args) > 5:
+        await message.reply("❌ Укажите от 1 до 5 каналов через пробел.")
         return
-    
-    if len(args) > 5:
-        await message.reply("❌ Можно указать не более 5 каналов-источников!")
-        return
-
     config = load_config()
     config["sources"] = args
     save_config(config)
-    
-    sources_str = "\n".join([f"{i+1}. {s}" for i, s in enumerate(args)])
-    await message.reply(f"✅ **Источники обновлены ({len(args)}/5):**\n{sources_str}", parse_mode="Markdown")
+    await message.reply(f"✅ Источники обновлены: {args}")
 
 @dp.message(Command("set_target"))
 async def cmd_set_target(message: Message):
     args = message.text.split()[1:]
     if not args:
-        await message.reply("❌ Укажите целевой канал.\nПример: `/set_target @navigatorRR4`", parse_mode="Markdown")
+        await message.reply("❌ Укажите целевой канал.")
         return
-    
-    target = args[0]
     config = load_config()
-    config["target"] = target
+    config["target"] = args[0]
     save_config(config)
-    
-    await message.reply(f"✅ **Целевой канал обновлен на:** {target}", parse_mode="Markdown")
+    await message.reply(f"✅ Цель обновлена: {args[0]}")
 
 def clean_and_format_text(text: str = "", target: str = "@navigatorRR4") -> str:
     if not text:
         return target
-
-    # Список фраз/ключевых слов из блоков внизу, которые нужно полностью стирать вместе с тем, что после них
     footers_to_remove = [
-        r'Предложить пост.*',
-        r'Поиск по водоёмам.*',
-        r'Барахолка.*',
-        r'Наши соцсети:.*',
-        r'Твич:.*',
-        r'Ютуб:.*',
-        r'Телеграм:.*',
-        r'Предложить пост, рекламу или розыгрыш:.*',
-        r'Ищешь конкретную рыбу.*',
-        r'Авторынок Астраханской области.*',
-        r'Список Авторынков ЮГА.*',
-        r'Разместить своё авто.*'
+        r'Предложить пост.*', r'Поиск по водоёмам.*', r'Барахолка.*',
+        r'Наши соцсети:.*', r'Твич:.*', r'Ютуб:.*', r'Телеграм:.*',
+        r'Предложить пост, рекламу или розыгрыш:.*', r'Ищешь конкретную рыбу.*',
+        r'Авторынок Астраханской области.*', r'Список Авторынков ЮГА.*', r'Разместить своё авто.*'
     ]
-
     for pattern in footers_to_remove:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
 
-    # Заменяем чистые @упоминания
     text = re.sub(r'(?<!#)\B@[A-Za-z0-9_]+', target, text)
-
     text = text.strip()
 
-    # Добавляем ваш тег сразу после первого хэштега вверху
     match = re.search(r'(#[А-Яа-яA-Za-z0-9_]+)', text)
     if match:
         first_tag = match.group(1)
@@ -121,7 +101,6 @@ def clean_and_format_text(text: str = "", target: str = "@navigatorRR4") -> str:
     else:
         if target not in text:
             text = f"{target}\n{text}"
-    
     return text
 
 @dp.channel_post()
@@ -142,7 +121,6 @@ async def handle_channel_post(post: Message):
     else:
         raw_text = post.caption or post.text or ""
         new_caption = clean_and_format_text(raw_text, target)
-        
         if post.caption:
             await post.copy_to(chat_id=target, caption=new_caption)
         elif post.text:
@@ -155,8 +133,44 @@ async def process_media_group(mg_id: str, target: str):
     posts = media_groups.pop(mg_id, [])
     if not posts:
         return
-    
     caption = ""
     for p in posts:
         if p.caption:
-            caption = clean
+            caption = clean_and_format_text(p.caption, target)
+            break
+    if not caption:
+        caption = target
+
+    await bot.copy_messages(
+        chat_id=target,
+        from_chat_id=posts[0].chat.id,
+        message_ids=[p.message_id for p in posts],
+        caption=caption
+    )
+
+async def on_startup(bot: Bot) -> None:
+    if RENDER_EXTERNAL_URL:
+        await bot.set_webhook(WEBHOOK_URL)
+        logging.info(f"Вебхук установлен: {WEBHOOK_URL}")
+    else:
+        logging.warning("RENDER_EXTERNAL_URL не задан в переменных окружения!")
+
+def main():
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    
+    app = web.Application()
+    
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    
+    dp.startup.register(on_startup)
+    
+    setup_application(app, dp, bot=bot)
+    
+    web.run_app(app, port=PORT)
+
+if __name__ == "__main__":
+    main()
